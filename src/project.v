@@ -17,6 +17,7 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     assign uio_out = 8'b0;
     assign uio_oe  = 8'b0;
     wire reset = ~rst_n;
+    wire _unused_ok = &{ena, ui_in[7:1], uio_in};
 
     reg [9:0] h_cnt;
     reg [9:0] v_cnt;
@@ -42,11 +43,8 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
         else if (frame_tick) frame_counter <= frame_counter + 1;
     end
     
-    // Truncated to 8 bits for math
+    // Truncated to 8 bits to resolve the UNUSEDSIGNAL warning
     wire [7:0] frame_cnt = frame_counter[7:0]; 
-
-    // Sink all explicitly unused signals and bits to prevent Verilator warnings
-    wire _unused_ok = &{ena, ui_in[7:1], uio_in, frame_counter[11:8], frame_cnt[1:0]};
 
     // Unified Mode Mux
     wire app_galv = ui_in[0];
@@ -71,9 +69,9 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     wire art_axes = (abs_x < 2) || (abs_y < 2);
 
     wire outer_shield = (abs_x + abs_y > 160) && (abs_x + abs_y < 164);
-    
-    // Adjusted width to target the 169% requirement
-    wire wider_blunt_diamond = (abs_x < 10'd169 && abs_y < 10'd80) && (abs_x + abs_y < 10'd200);
+    wire [6:0] pulse = frame_cnt[7] ? ~frame_cnt[6:0] : frame_cnt[6:0];
+    wire [9:0] p_add = {3'b0, pulse};
+    wire inner_pulse = (abs_x + abs_y > 10'd80 + p_add) && (abs_x + abs_y < 10'd84 + p_add);
 
     wire letter_D = (cx > -110 && cx < -70 && abs_y < 40) && !(cx > -100 && cx < -80 && abs_y < 20);
     wire letter_L = (cx > -50  && cx < -10 && abs_y < 40) && !(cx > -30  && cx < -10 && cy < 20);
@@ -90,15 +88,15 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     wire art_draw_shadow = (shadow_D || shadow_L || shadow_S || shadow_U) && !art_draw_dlsu;
 
     // =========================================================
-    // 4. APP 2: GALVANTRONIX HIGH-RES LOGO
+    // 4. APP 2: GALVANTRONIX HIGH-RES LOGO (BIT-SHIFT OPTIMIZED)
     // =========================================================
-    // Padded math variables for strict matching (Verilator WIDTHEXPAND fix)
+    // Padded math variables for strict matching
     wire signed [13:0] cy_14 = $signed({{3{cy[10]}}, cy});
     wire signed [13:0] ax_14 = $signed({4'b0, abs_x});
     wire signed [14:0] cy_15 = $signed({{4{cy[10]}}, cy});
     wire signed [14:0] ax_15 = $signed({5'b0, abs_x});
 
-    // Tightened Octagons (Eyes)
+    // Tightened Octagons (Eyes) - Unchanged, no heavy multiplication
     wire [10:0] edx = (abs_x > 120) ? (abs_x - 10'd120) : (10'd120 - abs_x);
     wire [10:0] edy = (cy > -40) ? (cy + 10'd40) : -(cy + 10'd40);
     wire eye_outer = (edx < 45) && (edy < 45) && (edx + edy < 60);
@@ -106,12 +104,14 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     wire eye_slit  = eye_inner && (edy < 4) && (edx < 25);
     wire draw_eyes = (eye_outer && !eye_inner) || eye_slit;
 
-    // Core Pentagon & Inner Lines
-    wire signed [13:0] p_top_val = 3*cy_14 - 2*ax_14 + 14'sd270;
+    // Core Pentagon & Inner Lines (Shifted to Powers of 2)
+    // Was: 3*cy - 2*ax | Now: 4*cy - 2*ax
+    wire signed [13:0] p_top_val = (cy_14 <<< 2) - (ax_14 <<< 1) + 14'sd270;
     wire [13:0] p_top = (p_top_val < 0) ? -p_top_val : p_top_val;
     wire p_top_line = (p_top < 16) && (abs_x <= 60) && (cy <= -50);
 
-    wire signed [13:0] p_side_val = cy_14 + 4*ax_14 - 14'sd190;
+    // Was: cy + 4*ax | Now: cy + 4*ax
+    wire signed [13:0] p_side_val = cy_14 + (ax_14 <<< 2) - 14'sd190;
     wire [13:0] p_side = (p_side_val < 0) ? -p_side_val : p_side_val;
     wire p_side_line = (p_side < 18) && (cy >= -50) && (cy <= 30);
 
@@ -120,40 +120,47 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
 
     wire core_sq = (abs_x < 22 && cy > -32 && cy < 7) && !(abs_x < 16 && cy > -26 && cy < 1);
 
-    wire signed [13:0] inner1_val = 5*ax_14 + 7*cy_14 + 14'sd50;
+    // Was: 5*ax + 7*cy | Now: 4*ax + 8*cy
+    wire signed [13:0] inner1_val = (ax_14 <<< 2) + (cy_14 <<< 3) + 14'sd50;
     wire [13:0] inner1 = (inner1_val < 0) ? -inner1_val : inner1_val;
     wire draw_inner1 = (inner1 < 30) && (abs_x >= 22) && (abs_x <= 60) && (cy <= -25);
 
-    wire signed [13:0] inner2_val = 4*ax_14 - 3*cy_14 - 14'sd70;
+    // Was: 4*ax - 3*cy | Now: 4*ax - 4*cy
+    wire signed [13:0] inner2_val = (ax_14 <<< 2) - (cy_14 <<< 2) - 14'sd70;
     wire [13:0] inner2 = (inner2_val < 0) ? -inner2_val : inner2_val;
     wire draw_inner2 = (inner2 < 20) && (abs_x >= 22) && (abs_x <= 40) && (cy >= 5);
     wire draw_inner3 = (abs_x < 4) && (cy > -90) && (cy < -32);
 
     wire draw_core = p_top_line || p_side_line || p_bot_line || core_sq || draw_inner1 || draw_inner2 || draw_inner3;
 
-    // Striped Mouth
-    wire mouth_area = (cy > 50 && cy < 110) && (cy_14 + 4*ax_14 < 14'sd170);
-    wire mouth_outline = (cy >= 46 && cy <= 114) && (cy_14 + 4*ax_14 < 14'sd178) && !mouth_area;
+    // Striped Mouth (Shifted)
+    wire mouth_area = (cy > 50 && cy < 110) && (cy_14 + (ax_14 <<< 2) < 14'sd170);
+    wire mouth_outline = (cy >= 46 && cy <= 114) && (cy_14 + (ax_14 <<< 2) < 14'sd178) && !mouth_area;
     wire mouth_stripes = mouth_area && (cy[4:3] == 2'b00); 
     wire draw_mouth = mouth_outline || mouth_stripes;
 
-    // Outer Frame (Strictly Bounded)
-    wire signed [14:0] l1_val_s = 2*ax_15 + 15*cy_15 + 15'sd1800;
+    // Outer Frame (Strictly Bounded & Shifted)
+    // Was: 2*ax + 15*cy | Now: 2*ax + 16*cy
+    wire signed [14:0] l1_val_s = (ax_15 <<< 1) + (cy_15 <<< 4) + 15'sd1800;
     wire [14:0] l1_val = (l1_val_s < 0) ? -l1_val_s : l1_val_s;
     wire l1 = (l1_val < 60) && (abs_x <= 150) && (cy <= -120);
 
-    wire signed [14:0] l2_val_s = 8*ax_15 - 7*cy_15 - 15'sd2180;
+    // Was: 8*ax - 7*cy | Now: 8*ax - 8*cy
+    wire signed [14:0] l2_val_s = (ax_15 <<< 3) - (cy_15 <<< 3) - 15'sd2180;
     wire [14:0] l2_val = (l2_val_s < 0) ? -l2_val_s : l2_val_s;
     wire l2 = (l2_val < 45) && (abs_x >= 150) && (cy <= -60);
 
-    wire signed [14:0] l3_val_s = 12*ax_15 + 7*cy_15 - 15'sd2220;
+    // Was: 12*ax + 7*cy | Now: 12*ax (8+4) + 8*cy 
+    // We use two shifts for 12x to maintain the shape, which just costs 1 standard adder
+    wire signed [14:0] l3_val_s = (ax_15 <<< 3) + (ax_15 <<< 2) + (cy_15 <<< 3) - 15'sd2220;
     wire [14:0] l3_val = (l3_val_s < 0) ? -l3_val_s : l3_val_s;
     wire l3 = (l3_val < 60) && (abs_x >= 150) && (cy > -60);
 
     wire [10:0] l4_val = (cy > 60) ? (cy - 10'd60) : (10'd60 - cy);
     wire l4 = (l4_val < 4) && (abs_x >= 100 && abs_x <= 150);
 
-    wire signed [14:0] l5_val_s = 2*ax_15 + cy_15 - 15'sd260;
+    // Was: 2*ax + cy | Now: 2*ax + cy
+    wire signed [14:0] l5_val_s = (ax_15 <<< 1) + cy_15 - 15'sd260;
     wire [14:0] l5_val = (l5_val_s < 0) ? -l5_val_s : l5_val_s;
     wire l5 = (l5_val < 10) && (abs_x >= 60 && abs_x < 100);
 
@@ -162,7 +169,7 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
 
     wire draw_frame = l1 || l2 || l3 || l4 || l5 || l6;
 
-    // Cyber Nodes
+    // Cyber Nodes - Unchanged
     wire [4:0] pulse_r = 5'd6 + {3'b0, frame_cnt[4:3]}; 
     wire [10:0] pr_11 = {6'b0, pulse_r};
     wire [10:0] cy_120 = (cy > -120) ? (cy + 10'd120) : -(cy + 10'd120);
@@ -180,7 +187,6 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
                       ((ax_100 + cyp_60) < pr_11) || ((ax_60 + cyp_140) < pr_11);
 
     wire draw_vector_logo = draw_eyes || draw_core || draw_mouth || draw_frame || draw_nodes;
-
     // =========================================================
     // 5. SHARED TEXT ENGINE
     // =========================================================
@@ -279,8 +285,8 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
                 r = 0; g = 1; b = 0; 
             end else if (outer_shield) begin 
                 r = 3; g = 3; b = 3; 
-            end else if (wider_blunt_diamond) begin 
-                r = 3; g = 3; b = 3; 
+            end else if (inner_pulse) begin 
+                r = 1; g = 3; b = 1; 
             end else if (art_axes) begin 
                 r = 0; g = 2; b = 0; 
             end else if (art_grid_lines) begin 
