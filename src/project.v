@@ -17,7 +17,8 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     assign uio_out = 8'b0;
     assign uio_oe  = 8'b0;
     wire reset = ~rst_n;
-    wire _unused_ok = &{ena, ui_in[7:6], uio_in};
+    wire [1:0] unused_ui = ui_in[7:6];
+    wire _unused_ok = &{1'b0, ena, unused_ui, uio_in, 1'b0};
 
     reg [9:0] h_cnt;
     reg [9:0] v_cnt;
@@ -212,12 +213,17 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     wire [1:0] hilbert_b = 2'b11; 
 
     // =========================================================
-    // 4. SHARED DESMOS ENGINE 
+    // 4. OPTIMIZED SHIELD ENGINE (No Signed Math)
     // =========================================================
-    wire signed [10:0] cx = $signed({1'b0, h_cnt}) - 320;
-    wire signed [10:0] cy = $signed({1'b0, v_cnt}) - 240;
-    wire [9:0] abs_x = (cx[10]) ? -cx[9:0] : cx[9:0];
-    wire [9:0] abs_y = (cy[10]) ? -cy[9:0] : cy[9:0];
+    // Calculate absolute distance from center (320, 240) without 11-bit signed variables
+    wire [9:0] abs_x = (h_cnt >= 320) ? (h_cnt - 320) : (320 - h_cnt);
+    wire [9:0] abs_y = (v_cnt >= 240) ? (v_cnt - 240) : (240 - v_cnt);
+    wire [10:0] abs_sum = abs_x + abs_y;
+
+    wire outer_shield = (abs_sum > 160) && (abs_sum < 164);
+    wire [6:0] pulse = frame_cnt[7] ? ~frame_cnt[6:0] : frame_cnt[6:0];
+    wire [9:0] p_add = {3'b0, pulse};
+    wire inner_pulse = (abs_sum > 10'd80 + p_add) && (abs_sum < 10'd84 + p_add);
 
     // =========================================================
     // 5. DEFAULT APP: GALVANTRONIX SHIELD & CIRCUIT MOTIF
@@ -229,25 +235,18 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     wire via_pad = (pan_x < 4) && (pan_y < 4) && (h_cnt[7] ^ v_cnt[7]);
     wire art_circuit = trace_h || trace_v || via_pad;
 
-    // --- OPTIMIZATION: Share the sum adder for outer and inner shields ---
-    wire [10:0] abs_sum = abs_x + abs_y;
-    wire outer_shield = (abs_sum > 160) && (abs_sum < 164);
-    wire [6:0] pulse = frame_cnt[7] ? ~frame_cnt[6:0] : frame_cnt[6:0];
-    wire [9:0] p_add = {3'b0, pulse};
-    wire inner_pulse = (abs_sum > 10'd80 + p_add) && (abs_sum < 10'd84 + p_add);
-
-    // --- OPTIMIZATION: Algebraically shift the shadows, eliminating physical subtractors entirely ---
-    wire letter_D = (cx > -110 && cx < -70 && cy > -40 && cy < 40) && !(cx > -100 && cx < -80 && cy > -20 && cy < 20);
-    wire shadow_D = (cx > -104 && cx < -64 && cy > -34 && cy < 46) && !(cx > -94 && cx < -74 && cy > -14 && cy < 26);
+    // --- OPTIMIZATION: Pre-solved Algebra. Raw screen coordinates mapped directly to bounding boxes ---
+    wire letter_D = (h_cnt > 210 && h_cnt < 250 && v_cnt > 200 && v_cnt < 280) && !(h_cnt > 220 && h_cnt < 240 && v_cnt > 220 && v_cnt < 260);
+    wire shadow_D = (h_cnt > 216 && h_cnt < 256 && v_cnt > 206 && v_cnt < 286) && !(h_cnt > 226 && h_cnt < 246 && v_cnt > 226 && v_cnt < 266);
     
-    wire letter_L = (cx > -50  && cx < -10 && cy > -40 && cy < 40) && !(cx > -30  && cx < -10 && cy < 20);
-    wire shadow_L = (cx > -44  && cx < -4  && cy > -34 && cy < 46) && !(cx > -24  && cx < -4  && cy < 26);
+    wire letter_L = (h_cnt > 270 && h_cnt < 310 && v_cnt > 200 && v_cnt < 280) && !(h_cnt > 290 && h_cnt < 310 && v_cnt < 260);
+    wire shadow_L = (h_cnt > 276 && h_cnt < 316 && v_cnt > 206 && v_cnt < 286) && !(h_cnt > 296 && h_cnt < 316 && v_cnt < 266);
     
-    wire letter_S = (cx > 10   && cx < 50  && cy > -40 && cy < 40) && !(cx > 30   && cx < 50  && cy > -20 && cy < 0) && !(cx > 10 && cx < 30 && cy > 0 && cy < 20);
-    wire shadow_S = (cx > 16   && cx < 56  && cy > -34 && cy < 46) && !(cx > 36   && cx < 56  && cy > -14 && cy < 6) && !(cx > 16 && cx < 36 && cy > 6 && cy < 26);
+    wire letter_S = (h_cnt > 330 && h_cnt < 370 && v_cnt > 200 && v_cnt < 280) && !(h_cnt > 350 && h_cnt < 370 && v_cnt > 220 && v_cnt < 240) && !(h_cnt > 330 && h_cnt < 350 && v_cnt > 240 && v_cnt < 260);
+    wire shadow_S = (h_cnt > 336 && h_cnt < 376 && v_cnt > 206 && v_cnt < 286) && !(h_cnt > 356 && h_cnt < 376 && v_cnt > 226 && v_cnt < 246) && !(h_cnt > 336 && h_cnt < 356 && v_cnt > 246 && v_cnt < 266);
     
-    wire letter_U = (cx > 70   && cx < 110 && cy > -40 && cy < 40) && !(cx > 80   && cx < 100 && cy < 20);
-    wire shadow_U = (cx > 76   && cx < 116 && cy > -34 && cy < 46) && !(cx > 86   && cx < 106 && cy < 26);
+    wire letter_U = (h_cnt > 390 && h_cnt < 430 && v_cnt > 200 && v_cnt < 280) && !(h_cnt > 400 && h_cnt < 420 && v_cnt < 260);
+    wire shadow_U = (h_cnt > 396 && h_cnt < 436 && v_cnt > 206 && v_cnt < 286) && !(h_cnt > 406 && h_cnt < 426 && v_cnt < 266);
 
     wire art_draw_dlsu = letter_D || letter_L || letter_S || letter_U;
     wire art_draw_shadow = (shadow_D || shadow_L || shadow_S || shadow_U) && !art_draw_dlsu;
