@@ -133,7 +133,7 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     wire maze_flash = (maze_state == 1) && win_timer[4];
 
     // =========================================================
-    // 3. APP 2: TRUE HILBERT CURVE 
+    // 3. APP 2: TRUE HILBERT CURVE (Extreme Optimization)
     // =========================================================
     reg [2:0] cur_order; reg [9:0] anim_timer; reg [5:0] pause_timer;
     
@@ -186,31 +186,17 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     wire [3:0] cell_x = local_x[7:4]; wire [3:0] cell_y = local_y[7:4];
     wire [3:0] sub_x  = local_x[3:0]; wire [3:0] sub_y  = local_y[3:0];
 
+    // Compute the sequence number for the current cell only
     wire [7:0] d_curr = hilbert_d(cell_x, cell_y);
-    reg  [3:0] nx, ny; reg valid_neighbor;
 
-    always @(*) begin
-        valid_neighbor = 1'b1;
-        if (sub_x > 9)      begin nx = cell_x + 1; ny = cell_y; if (cell_x == 15) valid_neighbor = 1'b0; end
-        else if (sub_x < 6) begin nx = cell_x - 1; ny = cell_y; if (cell_x == 0)  valid_neighbor = 1'b0; end
-        else if (sub_y > 9) begin nx = cell_x; ny = cell_y + 1; if (cell_y == 15) valid_neighbor = 1'b0; end
-        else if (sub_y < 6) begin nx = cell_x; ny = cell_y - 1; if (cell_y == 0)  valid_neighbor = 1'b0; end
-        else                begin nx = cell_x; ny = cell_y; end
-    end
-
-    wire [7:0] d_neighbor = hilbert_d(nx, ny);
-    wire is_center = (sub_x >= 6 && sub_x <= 9) && (sub_y >= 6 && sub_y <= 9);
-    wire is_arm    = !is_center;
-    wire connected = (d_neighbor == d_curr + 1) || (d_curr == d_neighbor + 1);
-    
-    // --- OPTIMIZATION: Eliminate 10-bit magnitude comparator for animation limiter ---
+    // --- OPTIMIZATION: Cut the neighbor logic and draw floating blocks to save routing area ---
     wire [7:0] active_d = (|anim_timer[9:8]) ? 8'hFF : anim_timer[7:0]; 
-    wire draw_hilbert = in_hilbert_bounds && (d_curr <= active_d) &&
-                        (is_center || (is_arm && valid_neighbor && connected && d_neighbor <= active_d));
+    wire is_cell_body = (sub_x >= 3 && sub_x <= 12) && (sub_y >= 3 && sub_y <= 12);
+    wire draw_hilbert = in_hilbert_bounds && (d_curr <= active_d) && is_cell_body;
 
     wire [1:0] hilbert_r = (d_curr[5:4] + frame_cnt[6:5]);
     wire [1:0] hilbert_g = (d_curr[6:5] + frame_cnt[5:4]);
-    wire [1:0] hilbert_b = 2'b11; 
+    wire [1:0] hilbert_b = 2'b11;
 
     // =========================================================
     // 4. OPTIMIZED SHIELD ENGINE (No Signed Math)
