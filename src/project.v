@@ -43,15 +43,14 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
         else if (frame_tick) frame_counter <= frame_counter + 1;
     end
     
-    // FIX: Strictly 8 bits to resolve UNUSEDSIGNAL and re-definition errors!
     wire [7:0] frame_cnt = frame_counter[7:0]; 
 
-    // Unified Mode Mux (App 6 removed, UI_IN[6] is now unused, default is Shield)
+    // Unified Mode Mux
     wire app_maze   = ui_in[5];
     wire app_hilb   = !ui_in[5] && ui_in[0];
 
     // =========================================================
-    // 2. APP 1: HARDWARE LOGIC MAZE
+    // 2. APP 1: HARDWARE LOGIC MAZE (Optimized ROM Usage)
     // =========================================================
     wire [4:0] gx = h_cnt[9:5];
     wire [4:0] gy = v_cnt[9:5];
@@ -73,6 +72,7 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
         end
     endfunction
 
+    // ROM INSTANCE 1: For VGA Rendering
     wire maze_wall = is_wall_at(gx, gy);
 
     reg [3:0] btn_state, btn_prev;
@@ -86,17 +86,24 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
 
     reg maze_state; reg [4:0] px, py; reg [7:0] win_timer;
 
+    // --- OPTIMIZATION: Condense 4 ROM instances into 1 by pre-calculating the target ---
+    wire move_any = move_up | move_down | move_left | move_right;
+    wire [4:0] try_x = move_up ? px : (move_down ? px : (move_left ? px - 1 : (move_right ? px + 1 : px)));
+    wire [4:0] try_y = move_up ? py - 1 : (move_down ? py + 1 : py);
+    
+    // ROM INSTANCE 2: Single lookup for movement collision
+    wire valid_move = !is_wall_at(try_x, try_y);
+
     always @(posedge clk) begin
         if (reset) begin
             maze_state <= 0; px <= 5'd1; py <= 5'd1; win_timer <= 0;
         end else if (app_maze) begin 
             if (maze_state == 0) begin
                 if (px == 5'd9 && py == 5'd7) begin maze_state <= 1; win_timer <= 0; end 
-                else if (frame_tick) begin
-                    if (move_up && !is_wall_at(px, py - 1)) py <= py - 1;
-                    else if (move_down && !is_wall_at(px, py + 1)) py <= py + 1;
-                    else if (move_left && !is_wall_at(px - 1, py)) px <= px - 1;
-                    else if (move_right && !is_wall_at(px + 1, py)) px <= px + 1;
+                else if (frame_tick && move_any && valid_move) begin
+                    // Only apply if the pre-calculated target is free
+                    px <= try_x;
+                    py <= try_y;
                 end
             end else begin
                 if (frame_tick) begin
@@ -127,10 +134,22 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     wire maze_flash = (maze_state == 1) && win_timer[4];
 
     // =========================================================
-    // 3. APP 2: TRUE HILBERT CURVE
+    // 3. APP 2: TRUE HILBERT CURVE (Optimized Shifter)
     // =========================================================
     reg [2:0] cur_order; reg [9:0] anim_timer; reg [5:0] pause_timer;
-    wire [9:0] max_d = (1 << (cur_order * 2)) - 1; 
+    
+    // --- OPTIMIZATION: Replaced expensive Barrel Shifter with simple LUT ---
+    reg [9:0] max_d;
+    always @(*) begin
+        case(cur_order)
+            1: max_d = 10'd3;
+            2: max_d = 10'd15;
+            3: max_d = 10'd63;
+            4: max_d = 10'd255;
+            5: max_d = 10'd1023;
+            default: max_d = 10'd3;
+        endcase
+    end
 
     always @(posedge clk) begin
         if (reset) begin
@@ -216,11 +235,9 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     // =========================================================
     // 5. DEFAULT APP: GALVANTRONIX SHIELD & CIRCUIT MOTIF
     // =========================================================
-    // Fixed Verilator 5-bit width warning
     wire [4:0] pan_x = h_cnt[4:0] - frame_cnt[6:2]; 
     wire [4:0] pan_y = v_cnt[4:0] - frame_cnt[6:2]; 
     
-    // Instead of a solid grid, XOR logic creates broken traces and vias
     wire trace_h = (pan_y == 0) && (h_cnt[6] ^ v_cnt[7]); 
     wire trace_v = (pan_x == 0) && (v_cnt[6] ^ h_cnt[7]);
     wire via_pad = (pan_x < 4) && (pan_y < 4) && (h_cnt[7] ^ v_cnt[7]);
@@ -258,11 +275,8 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
         txt_char = 8'h20;
         if (!app_maze && !app_hilb) begin
             case (txt_row)
-                // Title
                 6'd01: case(txt_col) 14:txt_char="G"; 15:txt_char="a"; 16:txt_char="l"; 17:txt_char="v"; 18:txt_char="a"; 19:txt_char="n"; 20:txt_char="t"; 21:txt_char="r"; 22:txt_char="o"; 23:txt_char="n"; 24:txt_char="i"; 25:txt_char="x"; default:; endcase
-                // Motto
                 6'd03: case(txt_col) 11:txt_char="C"; 12:txt_char="r"; 13:txt_char="a"; 14:txt_char="n"; 15:txt_char="k"; 17:txt_char="u"; 18:txt_char="p"; 20:txt_char="t"; 21:txt_char="h"; 22:txt_char="e"; 24:txt_char="p"; 25:txt_char="o"; 26:txt_char="w"; 27:txt_char="e"; 28:txt_char="r"; default:; endcase
-                // Credits
                 6'd26: case(txt_col) 5:txt_char="M"; 6:txt_char="a"; 7:txt_char="d"; 8:txt_char="e"; 10:txt_char="b"; 11:txt_char="y"; 13:txt_char="C"; 14:txt_char="h"; 15:txt_char="i"; 16:txt_char="c"; 17:txt_char="o"; 19:txt_char="A"; 20:txt_char="n"; 21:txt_char="d"; 22:txt_char="r"; 23:txt_char="e"; 25:txt_char="G"; 26:txt_char="."; 28:txt_char="O"; 29:txt_char="l"; 30:txt_char="a"; 31:txt_char="g"; 32:txt_char="u"; 33:txt_char="e"; 34:txt_char="r"; default:; endcase
                 6'd28: case(txt_col) 11:txt_char="B"; 12:txt_char="S"; 13:txt_char="M"; 14:txt_char="S"; 16:txt_char="E"; 17:txt_char="C"; 18:txt_char="E"; 20:txt_char="B"; 21:txt_char="a"; 22:txt_char="t"; 23:txt_char="c"; 24:txt_char="h"; 26:txt_char="1"; 27:txt_char="2"; 28:txt_char="2"; default:; endcase
                 default: ; 
@@ -350,26 +364,26 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
             // -----------------------------------------------------
             if (draw_text) begin
                 if (txt_row == 1) begin 
-                    r = 0; g = 1; b = 3; // Galvantronix (Bright Blue)
+                    r = 0; g = 1; b = 3; 
                 end else if (txt_row == 3) begin 
-                    r = 0; g = 3; b = 3; // Crank up the power (Cyan)
+                    r = 0; g = 3; b = 3; 
                 end else if (txt_row > 20) begin 
-                    r = 3; g = 3; b = 3; // Credits (White)
+                    r = 3; g = 3; b = 3; 
                 end else begin
-                    r = 3; g = 3; b = 3; // Fallback
+                    r = 3; g = 3; b = 3; 
                 end
             end else if (art_draw_dlsu) begin 
-                r = 0; g = 3; b = 0; // Shield fill
+                r = 0; g = 3; b = 0; 
             end else if (art_draw_shadow) begin 
-                r = 0; g = 1; b = 0; // Shield shadow
+                r = 0; g = 1; b = 0; 
             end else if (outer_shield) begin 
-                r = 3; g = 3; b = 3; // Outer ring
+                r = 3; g = 3; b = 3; 
             end else if (inner_pulse) begin 
-                r = 1; g = 3; b = 1; // Pulsing ring
+                r = 1; g = 3; b = 1; 
             end else if (art_circuit) begin 
-                r = 0; g = 1; b = 0; // Circuit traces background
+                r = 0; g = 1; b = 0; 
             end else begin 
-                r = 0; g = 0; b = 0; // Black space
+                r = 0; g = 0; b = 0; 
             end
         end
     end
