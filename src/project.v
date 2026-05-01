@@ -1,7 +1,7 @@
 `default_nettype none
 
 module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
-    input  wire [7:0] ui_in,    // [7]:Unused, [6]:Galv, [5]:Maze, [4:1]:D-Pad, [0]:Hilbert
+    input  wire [7:0] ui_in,    // [7:1]:Unused, [0]:Toggle (0=DLSU Shield, 1=Galvantronix)
     output wire [7:0] uo_out,   // VGA out: {hsync, B0, G0, R0, vsync, B1, G1, R1}
     input  wire [7:0] uio_in,   
     output wire [7:0] uio_out,  
@@ -17,7 +17,7 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     assign uio_out = 8'b0;
     assign uio_oe  = 8'b0;
     wire reset = ~rst_n;
-    wire _unused_ok = &{ena, ui_in[7], uio_in};
+    wire _unused_ok = &{ena, ui_in[7:1], uio_in};
 
     reg [9:0] h_cnt;
     reg [9:0] v_cnt;
@@ -43,171 +43,14 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
         else if (frame_tick) frame_counter <= frame_counter + 1;
     end
     
-    // FIX: Truncated to 8 bits to resolve the UNUSEDSIGNAL warning!
+    // Truncated to 8 bits to resolve the UNUSEDSIGNAL warning
     wire [7:0] frame_cnt = frame_counter[7:0]; 
 
     // Unified Mode Mux
-    wire app_galv   = ui_in[6];
-    wire app_maze   = !ui_in[6] && ui_in[5];
-    wire app_hilb   = !ui_in[6] && !ui_in[5] && ui_in[0];
+    wire app_galv = ui_in[0];
 
     // =========================================================
-    // 2. APP 1: HARDWARE LOGIC MAZE
-    // =========================================================
-    wire [4:0] gx = h_cnt[9:5];
-    wire [4:0] gy = v_cnt[9:5];
-
-    function is_wall_at;
-        input [4:0] grid_x; input [4:0] grid_y; reg [19:0] r;
-        begin
-            case(grid_y)
-                0:  r = 20'b1111_1111_1111_1111_1111; 1:  r = 20'b1000_0000_0000_0000_0001; 
-                2:  r = 20'b1011_1110_1011_1110_1101; 3:  r = 20'b1010_0000_1000_0010_0101;
-                4:  r = 20'b1010_1111_1110_1110_0101; 5:  r = 20'b1010_1000_0010_0000_0001; 
-                6:  r = 20'b1010_1011_0011_1111_1101; 7:  r = 20'b1000_0010_0000_0000_0001; 
-                8:  r = 20'b1111_1011_1111_1011_1101; 9:  r = 20'b1000_0000_0010_0010_0001;
-                10: r = 20'b1011_1111_1011_1010_1101; 11: r = 20'b1010_0000_1000_0010_0101;
-                12: r = 20'b1010_1111_1111_1110_0101; 13: r = 20'b1000_0000_0000_0000_0001;
-                14: r = 20'b1111_1111_1111_1111_1111; default: r = 20'hFFFFF;
-            endcase
-            is_wall_at = (grid_x < 20 && grid_y < 15) ? r[19 - grid_x] : 1'b1;
-        end
-    endfunction
-
-    wire maze_wall = is_wall_at(gx, gy);
-
-    reg [3:0] btn_state, btn_prev;
-    always @(posedge clk) begin
-        if (reset) begin btn_state <= 0; btn_prev <= 0; end 
-        else if (frame_tick) begin btn_state <= ui_in[4:1]; btn_prev <= btn_state; end
-    end
-    
-    wire move_up    = btn_state[0] & ~btn_prev[0]; wire move_down  = btn_state[1] & ~btn_prev[1];
-    wire move_left  = btn_state[2] & ~btn_prev[2]; wire move_right = btn_state[3] & ~btn_prev[3];
-
-    reg maze_state; reg [4:0] px, py; reg [7:0] win_timer;
-
-    always @(posedge clk) begin
-        if (reset) begin
-            maze_state <= 0; px <= 5'd1; py <= 5'd1; win_timer <= 0;
-        end else if (app_maze) begin 
-            if (maze_state == 0) begin
-                if (px == 5'd9 && py == 5'd7) begin maze_state <= 1; win_timer <= 0; end 
-                else if (frame_tick) begin
-                    if (move_up && !is_wall_at(px, py - 1)) py <= py - 1;
-                    else if (move_down && !is_wall_at(px, py + 1)) py <= py + 1;
-                    else if (move_left && !is_wall_at(px - 1, py)) px <= px - 1;
-                    else if (move_right && !is_wall_at(px + 1, py)) px <= px + 1;
-                end
-            end else begin
-                if (frame_tick) begin
-                    if (win_timer == 8'd180) begin maze_state <= 0; px <= 5'd1; py <= 5'd1; end 
-                    else win_timer <= win_timer + 1;
-                end
-            end
-        end
-    end
-
-    wire [2:0] px_text = h_cnt[4:2]; wire [2:0] py_text = v_cnt[4:2];
-    reg [7:0] maze_font_row;
-    always @(*) begin
-        maze_font_row = 8'h00;
-        if (gx == 8) case(py_text) 0:maze_font_row=8'hF8; 1:maze_font_row=8'h6C; 2:maze_font_row=8'h66; 3:maze_font_row=8'h66; 4:maze_font_row=8'h66; 5:maze_font_row=8'h6C; 6:maze_font_row=8'hF8; default:maze_font_row=8'h00; endcase
-        else if (gx == 9) case(py_text) 0:maze_font_row=8'h60; 1:maze_font_row=8'h60; 2:maze_font_row=8'h60; 3:maze_font_row=8'h60; 4:maze_font_row=8'h60; 5:maze_font_row=8'h60; 6:maze_font_row=8'hFE; default:maze_font_row=8'h00; endcase
-        else if (gx == 10) case(py_text) 0:maze_font_row=8'h3C; 1:maze_font_row=8'h66; 2:maze_font_row=8'h60; 3:maze_font_row=8'h3C; 4:maze_font_row=8'h06; 5:maze_font_row=8'h66; 6:maze_font_row=8'h3C; default:maze_font_row=8'h00; endcase
-        else if (gx == 11) case(py_text) 0:maze_font_row=8'h66; 1:maze_font_row=8'h66; 2:maze_font_row=8'h66; 3:maze_font_row=8'h66; 4:maze_font_row=8'h66; 5:maze_font_row=8'h66; 6:maze_font_row=8'h3C; default:maze_font_row=8'h00; endcase
-    end
-
-    wire maze_draw_text = (gy == 0) && maze_font_row[7 - px_text] && (gx >= 8 && gx <= 11);
-    wire [4:0] px_mod = h_cnt[4:0]; wire [4:0] py_mod = v_cnt[4:0];
-    wire in_padding = (px_mod >= 8 && px_mod < 24) && (py_mod >= 8 && py_mod < 24);
-    wire is_player = (gx == px && gy == py) && in_padding;
-    wire is_target = (gx == 5'd9 && gy == 5'd7) && in_padding;
-    wire brick_hi = (px_mod == 0) || (py_mod == 0);
-    wire brick_lo = (px_mod == 31) || (py_mod == 31);
-    wire maze_flash = (maze_state == 1) && win_timer[4];
-
-    // =========================================================
-    // 3. APP 2: TRUE HILBERT CURVE
-    // =========================================================
-    reg [2:0] cur_order; reg [9:0] anim_timer; reg [5:0] pause_timer;
-    wire [9:0] max_d = (1 << (cur_order * 2)) - 1; 
-
-    always @(posedge clk) begin
-        if (reset) begin
-            cur_order <= 1; anim_timer <= 0; pause_timer <= 0;
-        end else if (frame_tick && app_hilb) begin
-            if (anim_timer > max_d) begin
-                if (pause_timer < 60) pause_timer <= pause_timer + 1; 
-                else begin
-                    pause_timer <= 0; anim_timer <= 0;
-                    if (cur_order == 5) cur_order <= 1; 
-                    else cur_order <= cur_order + 1;    
-                end
-            end else begin
-                if      (cur_order <= 2) anim_timer <= anim_timer + 1;
-                else if (cur_order == 3) anim_timer <= anim_timer + 2;
-                else if (cur_order == 4) anim_timer <= anim_timer + 4;
-                else                     anim_timer <= anim_timer + 8;
-            end
-        end
-    end
-
-    function [7:0] hilbert_d;
-        input [3:0] hx; input [3:0] hy;
-        reg rx3, ry3, rx2, ry2, rx1, ry1, rx0, ry0;
-        reg [1:0] d3, d2, d1, d0; reg [2:0] cx2, cy2; reg [1:0] cx1, cy1; reg [0:0] cx0, cy0;
-        begin
-            rx3 = hx[3]; ry3 = hy[3]; d3 = {rx3, rx3^ry3};
-            cx2 = (ry3 == 0) ? (rx3 ? ~hy[2:0] : hy[2:0]) : hx[2:0];
-            cy2 = (ry3 == 0) ? (rx3 ? ~hx[2:0] : hx[2:0]) : hy[2:0];
-
-            rx2 = cx2[2]; ry2 = cy2[2]; d2 = {rx2, rx2^ry2};
-            cx1 = (ry2 == 0) ? (rx2 ? ~cy2[1:0] : cy2[1:0]) : cx2[1:0];
-            cy1 = (ry2 == 0) ? (rx2 ? ~cx2[1:0] : cx2[1:0]) : cy2[1:0];
-
-            rx1 = cx1[1]; ry1 = cy1[1]; d1 = {rx1, rx1^ry1};
-            cx0 = (ry1 == 0) ? (rx1 ? ~cy1[0] : cy1[0]) : cx1[0];
-            cy0 = (ry1 == 0) ? (rx1 ? ~cx1[0] : cx1[0]) : cy1[0];
-
-            rx0 = cx0[0]; ry0 = cy0[0]; d0 = {rx0, rx0^ry0};
-            hilbert_d = {d3, d2, d1, d0};
-        end
-    endfunction
-
-    wire in_hilbert_bounds = (h_cnt >= 192 && h_cnt < 448) && (v_cnt >= 112 && v_cnt < 368);
-    // Explicit 8-bit wrap-around math to avoid WIDTHTRUNC warnings
-    wire [7:0] local_x = h_cnt[7:0] - 8'd192; 
-    wire [7:0] local_y = v_cnt[7:0] - 8'd112;
-    wire [3:0] cell_x = local_x[7:4]; wire [3:0] cell_y = local_y[7:4];
-    wire [3:0] sub_x  = local_x[3:0]; wire [3:0] sub_y  = local_y[3:0];
-
-    wire [7:0] d_curr = hilbert_d(cell_x, cell_y);
-    reg  [3:0] nx, ny; reg valid_neighbor;
-
-    always @(*) begin
-        valid_neighbor = 1'b1;
-        if (sub_x > 9)      begin nx = cell_x + 1; ny = cell_y; if (cell_x == 15) valid_neighbor = 1'b0; end
-        else if (sub_x < 6) begin nx = cell_x - 1; ny = cell_y; if (cell_x == 0)  valid_neighbor = 1'b0; end
-        else if (sub_y > 9) begin nx = cell_x; ny = cell_y + 1; if (cell_y == 15) valid_neighbor = 1'b0; end
-        else if (sub_y < 6) begin nx = cell_x; ny = cell_y - 1; if (cell_y == 0)  valid_neighbor = 1'b0; end
-        else                begin nx = cell_x; ny = cell_y; end
-    end
-
-    wire [7:0] d_neighbor = hilbert_d(nx, ny);
-    wire is_center = (sub_x >= 6 && sub_x <= 9) && (sub_y >= 6 && sub_y <= 9);
-    wire is_arm    = !is_center;
-    wire connected = (d_neighbor == d_curr + 1) || (d_curr == d_neighbor + 1);
-    wire [7:0] active_d = (anim_timer > 255) ? 255 : anim_timer[7:0];
-    wire draw_hilbert = in_hilbert_bounds && (d_curr <= active_d) &&
-                        (is_center || (is_arm && valid_neighbor && connected && d_neighbor <= active_d));
-
-    wire [1:0] hilbert_r = (d_curr[5:4] + frame_cnt[6:5]);
-    wire [1:0] hilbert_g = (d_curr[6:5] + frame_cnt[5:4]);
-    wire [1:0] hilbert_b = 2'b11; 
-
-    // =========================================================
-    // 4. SHARED DESMOS ENGINE (Math + Coordinate Origins)
+    // 2. SHARED DESMOS ENGINE (Math + Coordinate Origins)
     // =========================================================
     wire signed [10:0] cx = $signed({1'b0, h_cnt}) - 320;
     wire signed [10:0] cy = $signed({1'b0, v_cnt}) - 240;
@@ -217,7 +60,7 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     wire [9:0] abs_y = (cy[10]) ? -cy[9:0] : cy[9:0];
 
     // =========================================================
-    // 5. APP 3: DLSU SHIELD (Default)
+    // 3. APP 1: DLSU SHIELD (Default)
     // =========================================================
     // Explicit padding to prevent WIDTHEXPAND warning
     wire [5:0] pan_x = h_cnt[5:0] - frame_cnt[7:2]; 
@@ -245,7 +88,7 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     wire art_draw_shadow = (shadow_D || shadow_L || shadow_S || shadow_U) && !art_draw_dlsu;
 
     // =========================================================
-    // 6. APP 4: GALVANTRONIX HIGH-RES LOGO (Cleaned Geometry)
+    // 4. APP 2: GALVANTRONIX HIGH-RES LOGO
     // =========================================================
     // Padded math variables for strict matching (Verilator WIDTHEXPAND fix)
     wire signed [13:0] cy_14 = $signed({{3{cy[10]}}, cy});
@@ -337,7 +180,7 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     wire draw_vector_logo = draw_eyes || draw_core || draw_mouth || draw_frame || draw_nodes;
 
     // =========================================================
-    // 7. SHARED TEXT ENGINE
+    // 5. SHARED TEXT ENGINE
     // =========================================================
     wire [5:0] txt_row = v_cnt[9:4]; 
     wire [5:0] txt_col = h_cnt[9:4]; 
@@ -408,7 +251,7 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     wire draw_text = txt_font[7 - txt_px];
 
     // =========================================================
-    // 8. TOP-LEVEL COLOR MULTIPLEXER
+    // 6. TOP-LEVEL COLOR MULTIPLEXER
     // =========================================================
     reg [1:0] r, g, b;
 
@@ -421,33 +264,6 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
             // -----------------------------------------------------
             if (draw_vector_logo || draw_text) begin r = 0; g = 2; b = 3; end 
             else begin r = 0; g = 0; b = 0; end
-        end else if (app_maze) begin
-            // -----------------------------------------------------
-            // RENDER: MAZE GAME
-            // -----------------------------------------------------
-            if (maze_draw_text) begin
-                r = maze_flash ? 3 : 0; g = 3; b = maze_flash ? 3 : 0; 
-            end else if (is_player) begin
-                r = maze_flash ? 3 : 0; g = 3; b = 3;
-            end else if (is_target) begin
-                r = 3; g = 3; b = 3; 
-            end else if (maze_wall) begin
-                if (maze_flash) begin r = 3; g = 3; b = 0; end
-                else if (brick_hi) begin r = 0; g = 3; b = 0; end
-                else if (brick_lo) begin r = 0; g = 1; b = 0; end
-                else begin r = 0; g = 2; b = 0; end
-            end else begin
-                r = 0; g = 0; b = 0; 
-            end
-        end else if (app_hilb) begin
-            // -----------------------------------------------------
-            // RENDER: HILBERT CURVE
-            // -----------------------------------------------------
-            if (draw_hilbert) begin
-                r = hilbert_r; g = hilbert_g; b = hilbert_b;
-            end else begin
-                r = 0; g = 0; b = 0;
-            end
         end else begin
             // -----------------------------------------------------
             // RENDER: DLSU SHIELD (Default mode)
