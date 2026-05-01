@@ -69,8 +69,6 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     wire art_axes = (abs_x < 2) || (abs_y < 2);
 
     wire outer_shield = (abs_x + abs_y > 160) && (abs_x + abs_y < 164);
-    wire [6:0] pulse = frame_cnt[7] ? ~frame_cnt[6:0] : frame_cnt[6:0];
-    wire [9:0] p_add = {3'b0, pulse};
     
     // Adjusted width to target the 169% requirement
     wire wider_blunt_diamond = (abs_x < 10'd169 && abs_y < 10'd80) && (abs_x + abs_y < 10'd200);
