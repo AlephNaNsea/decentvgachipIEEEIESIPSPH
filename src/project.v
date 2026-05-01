@@ -17,7 +17,6 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     assign uio_out = 8'b0;
     assign uio_oe  = 8'b0;
     wire reset = ~rst_n;
-    wire _unused_ok = &{ena, ui_in[7:1], uio_in};
 
     reg [9:0] h_cnt;
     reg [9:0] v_cnt;
@@ -43,8 +42,11 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
         else if (frame_tick) frame_counter <= frame_counter + 1;
     end
     
-    // Truncated to 8 bits to resolve the UNUSEDSIGNAL warning
+    // Truncated to 8 bits for math
     wire [7:0] frame_cnt = frame_counter[7:0]; 
+
+    // Sink all explicitly unused signals and bits to prevent Verilator warnings
+    wire _unused_ok = &{ena, ui_in[7:1], uio_in, frame_counter[11:8], frame_cnt[1:0]};
 
     // Unified Mode Mux
     wire app_galv = ui_in[0];
