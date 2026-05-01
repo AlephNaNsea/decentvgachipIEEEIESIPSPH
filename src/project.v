@@ -71,7 +71,9 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     wire outer_shield = (abs_x + abs_y > 160) && (abs_x + abs_y < 164);
     wire [6:0] pulse = frame_cnt[7] ? ~frame_cnt[6:0] : frame_cnt[6:0];
     wire [9:0] p_add = {3'b0, pulse};
-    wire inner_pulse = (abs_x + abs_y > 10'd80 + p_add) && (abs_x + abs_y < 10'd84 + p_add);
+    
+    // Adjusted width to target the 169% requirement
+    wire wider_blunt_diamond = (abs_x < 10'd169 && abs_y < 10'd80) && (abs_x + abs_y < 10'd200);
 
     wire letter_D = (cx > -110 && cx < -70 && abs_y < 40) && !(cx > -100 && cx < -80 && abs_y < 20);
     wire letter_L = (cx > -50  && cx < -10 && abs_y < 40) && !(cx > -30  && cx < -10 && cy < 20);
@@ -277,8 +279,8 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
                 r = 0; g = 1; b = 0; 
             end else if (outer_shield) begin 
                 r = 3; g = 3; b = 3; 
-            end else if (inner_pulse) begin 
-                r = 1; g = 3; b = 1; 
+            end else if (wider_blunt_diamond) begin 
+                r = 3; g = 3; b = 3; 
             end else if (art_axes) begin 
                 r = 0; g = 2; b = 0; 
             end else if (art_grid_lines) begin 
