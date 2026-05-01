@@ -50,7 +50,7 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     wire app_hilb   = !ui_in[5] && ui_in[0];
 
     // =========================================================
-    // 2. APP 1: HARDWARE LOGIC MAZE (Optimized ROM Usage)
+    // 2. APP 1: HARDWARE LOGIC MAZE (Time-Multiplexed ROM)
     // =========================================================
     wire [4:0] gx = h_cnt[9:5];
     wire [4:0] gy = v_cnt[9:5];
@@ -72,9 +72,6 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
         end
     endfunction
 
-    // ROM INSTANCE 1: For VGA Rendering
-    wire maze_wall = is_wall_at(gx, gy);
-
     reg [3:0] btn_state, btn_prev;
     always @(posedge clk) begin
         if (reset) begin btn_state <= 0; btn_prev <= 0; end 
@@ -85,14 +82,17 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     wire move_left  = btn_state[2] & ~btn_prev[2]; wire move_right = btn_state[3] & ~btn_prev[3];
 
     reg maze_state; reg [4:0] px, py; reg [7:0] win_timer;
-
-    // --- OPTIMIZATION: Condense 4 ROM instances into 1 by pre-calculating the target ---
     wire move_any = move_up | move_down | move_left | move_right;
     wire [4:0] try_x = move_up ? px : (move_down ? px : (move_left ? px - 1 : (move_right ? px + 1 : px)));
     wire [4:0] try_y = move_up ? py - 1 : (move_down ? py + 1 : py);
     
-    // ROM INSTANCE 2: Single lookup for movement collision
-    wire valid_move = !is_wall_at(try_x, try_y);
+    // --- OPTIMIZATION: Time-multiplex the single ROM so graphics and logic share it ---
+    wire [4:0] rom_qx = frame_tick ? try_x : gx;
+    wire [4:0] rom_qy = frame_tick ? try_y : gy;
+    wire wall_lookup = is_wall_at(rom_qx, rom_qy);
+    
+    wire maze_wall = wall_lookup;      // Read during display_on
+    wire valid_move = !wall_lookup;    // Evaluated precisely on frame_tick
 
     always @(posedge clk) begin
         if (reset) begin
@@ -101,9 +101,7 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
             if (maze_state == 0) begin
                 if (px == 5'd9 && py == 5'd7) begin maze_state <= 1; win_timer <= 0; end 
                 else if (frame_tick && move_any && valid_move) begin
-                    // Only apply if the pre-calculated target is free
-                    px <= try_x;
-                    py <= try_y;
+                    px <= try_x; py <= try_y;
                 end
             end else begin
                 if (frame_tick) begin
@@ -134,20 +132,15 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     wire maze_flash = (maze_state == 1) && win_timer[4];
 
     // =========================================================
-    // 3. APP 2: TRUE HILBERT CURVE (Optimized Shifter)
+    // 3. APP 2: TRUE HILBERT CURVE 
     // =========================================================
     reg [2:0] cur_order; reg [9:0] anim_timer; reg [5:0] pause_timer;
     
-    // --- OPTIMIZATION: Replaced expensive Barrel Shifter with simple LUT ---
     reg [9:0] max_d;
     always @(*) begin
         case(cur_order)
-            1: max_d = 10'd3;
-            2: max_d = 10'd15;
-            3: max_d = 10'd63;
-            4: max_d = 10'd255;
-            5: max_d = 10'd1023;
-            default: max_d = 10'd3;
+            1: max_d = 10'd3; 2: max_d = 10'd15; 3: max_d = 10'd63;
+            4: max_d = 10'd255; 5: max_d = 10'd1023; default: max_d = 10'd3;
         endcase
     end
 
@@ -177,25 +170,18 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
         reg [1:0] d3, d2, d1, d0; reg [2:0] cx2, cy2; reg [1:0] cx1, cy1; reg [0:0] cx0, cy0;
         begin
             rx3 = hx[3]; ry3 = hy[3]; d3 = {rx3, rx3^ry3};
-            cx2 = (ry3 == 0) ? (rx3 ? ~hy[2:0] : hy[2:0]) : hx[2:0];
-            cy2 = (ry3 == 0) ? (rx3 ? ~hx[2:0] : hx[2:0]) : hy[2:0];
-            
+            cx2 = (ry3 == 0) ? (rx3 ? ~hy[2:0] : hy[2:0]) : hx[2:0]; cy2 = (ry3 == 0) ? (rx3 ? ~hx[2:0] : hx[2:0]) : hy[2:0];
             rx2 = cx2[2]; ry2 = cy2[2]; d2 = {rx2, rx2^ry2};
-            cx1 = (ry2 == 0) ? (rx2 ? ~cy2[1:0] : cy2[1:0]) : cx2[1:0];
-            cy1 = (ry2 == 0) ? (rx2 ? ~cx2[1:0] : cx2[1:0]) : cy2[1:0];
-            
+            cx1 = (ry2 == 0) ? (rx2 ? ~cy2[1:0] : cy2[1:0]) : cx2[1:0]; cy1 = (ry2 == 0) ? (rx2 ? ~cx2[1:0] : cx2[1:0]) : cy2[1:0];
             rx1 = cx1[1]; ry1 = cy1[1]; d1 = {rx1, rx1^ry1};
-            cx0 = (ry1 == 0) ? (rx1 ? ~cy1[0] : cy1[0]) : cx1[0];
-            cy0 = (ry1 == 0) ? (rx1 ? ~cx1[0] : cx1[0]) : cy1[0];
-            
+            cx0 = (ry1 == 0) ? (rx1 ? ~cy1[0] : cy1[0]) : cx1[0]; cy0 = (ry1 == 0) ? (rx1 ? ~cx1[0] : cx1[0]) : cy1[0];
             rx0 = cx0[0]; ry0 = cy0[0]; d0 = {rx0, rx0^ry0};
             hilbert_d = {d3, d2, d1, d0};
         end
     endfunction
 
     wire in_hilbert_bounds = (h_cnt >= 192 && h_cnt < 448) && (v_cnt >= 112 && v_cnt < 368);
-    wire [7:0] local_x = h_cnt[7:0] - 8'd192; 
-    wire [7:0] local_y = v_cnt[7:0] - 8'd112;
+    wire [7:0] local_x = h_cnt[7:0] - 8'd192; wire [7:0] local_y = v_cnt[7:0] - 8'd112;
     wire [3:0] cell_x = local_x[7:4]; wire [3:0] cell_y = local_y[7:4];
     wire [3:0] sub_x  = local_x[3:0]; wire [3:0] sub_y  = local_y[3:0];
 
@@ -215,7 +201,9 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     wire is_center = (sub_x >= 6 && sub_x <= 9) && (sub_y >= 6 && sub_y <= 9);
     wire is_arm    = !is_center;
     wire connected = (d_neighbor == d_curr + 1) || (d_curr == d_neighbor + 1);
-    wire [7:0] active_d = (anim_timer > 255) ? 255 : anim_timer[7:0];
+    
+    // --- OPTIMIZATION: Eliminate 10-bit magnitude comparator for animation limiter ---
+    wire [7:0] active_d = (|anim_timer[9:8]) ? 8'hFF : anim_timer[7:0]; 
     wire draw_hilbert = in_hilbert_bounds && (d_curr <= active_d) &&
                         (is_center || (is_arm && valid_neighbor && connected && d_neighbor <= active_d));
 
@@ -224,11 +212,10 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     wire [1:0] hilbert_b = 2'b11; 
 
     // =========================================================
-    // 4. SHARED DESMOS ENGINE (Math + Coordinate Origins)
+    // 4. SHARED DESMOS ENGINE 
     // =========================================================
     wire signed [10:0] cx = $signed({1'b0, h_cnt}) - 320;
     wire signed [10:0] cy = $signed({1'b0, v_cnt}) - 240;
-
     wire [9:0] abs_x = (cx[10]) ? -cx[9:0] : cx[9:0];
     wire [9:0] abs_y = (cy[10]) ? -cy[9:0] : cy[9:0];
 
@@ -237,48 +224,65 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     // =========================================================
     wire [4:0] pan_x = h_cnt[4:0] - frame_cnt[6:2]; 
     wire [4:0] pan_y = v_cnt[4:0] - frame_cnt[6:2]; 
-    
     wire trace_h = (pan_y == 0) && (h_cnt[6] ^ v_cnt[7]); 
     wire trace_v = (pan_x == 0) && (v_cnt[6] ^ h_cnt[7]);
     wire via_pad = (pan_x < 4) && (pan_y < 4) && (h_cnt[7] ^ v_cnt[7]);
     wire art_circuit = trace_h || trace_v || via_pad;
 
-    wire outer_shield = (abs_x + abs_y > 160) && (abs_x + abs_y < 164);
+    // --- OPTIMIZATION: Share the sum adder for outer and inner shields ---
+    wire [10:0] abs_sum = abs_x + abs_y;
+    wire outer_shield = (abs_sum > 160) && (abs_sum < 164);
     wire [6:0] pulse = frame_cnt[7] ? ~frame_cnt[6:0] : frame_cnt[6:0];
     wire [9:0] p_add = {3'b0, pulse};
-    wire inner_pulse = (abs_x + abs_y > 10'd80 + p_add) && (abs_x + abs_y < 10'd84 + p_add);
+    wire inner_pulse = (abs_sum > 10'd80 + p_add) && (abs_sum < 10'd84 + p_add);
 
-    wire letter_D = (cx > -110 && cx < -70 && abs_y < 40) && !(cx > -100 && cx < -80 && abs_y < 20);
-    wire letter_L = (cx > -50  && cx < -10 && abs_y < 40) && !(cx > -30  && cx < -10 && cy < 20);
-    wire letter_S = (cx > 10   && cx < 50  && abs_y < 40) && !(cx > 30   && cx < 50  && cy > -20 && cy < 0) && !(cx > 10 && cx < 30 && cy > 0 && cy < 20);
-    wire letter_U = (cx > 70   && cx < 110 && abs_y < 40) && !(cx > 80   && cx < 100 && cy < 20);
+    // --- OPTIMIZATION: Algebraically shift the shadows, eliminating physical subtractors entirely ---
+    wire letter_D = (cx > -110 && cx < -70 && cy > -40 && cy < 40) && !(cx > -100 && cx < -80 && cy > -20 && cy < 20);
+    wire shadow_D = (cx > -104 && cx < -64 && cy > -34 && cy < 46) && !(cx > -94 && cx < -74 && cy > -14 && cy < 26);
+    
+    wire letter_L = (cx > -50  && cx < -10 && cy > -40 && cy < 40) && !(cx > -30  && cx < -10 && cy < 20);
+    wire shadow_L = (cx > -44  && cx < -4  && cy > -34 && cy < 46) && !(cx > -24  && cx < -4  && cy < 26);
+    
+    wire letter_S = (cx > 10   && cx < 50  && cy > -40 && cy < 40) && !(cx > 30   && cx < 50  && cy > -20 && cy < 0) && !(cx > 10 && cx < 30 && cy > 0 && cy < 20);
+    wire shadow_S = (cx > 16   && cx < 56  && cy > -34 && cy < 46) && !(cx > 36   && cx < 56  && cy > -14 && cy < 6) && !(cx > 16 && cx < 36 && cy > 6 && cy < 26);
+    
+    wire letter_U = (cx > 70   && cx < 110 && cy > -40 && cy < 40) && !(cx > 80   && cx < 100 && cy < 20);
+    wire shadow_U = (cx > 76   && cx < 116 && cy > -34 && cy < 46) && !(cx > 86   && cx < 106 && cy < 26);
+
     wire art_draw_dlsu = letter_D || letter_L || letter_S || letter_U;
-
-    wire signed [10:0] sx = cx - 11'sd6; wire signed [10:0] sy = cy - 11'sd6; 
-    wire [9:0] abs_sy = (sy[10]) ? -sy[9:0] : sy[9:0];
-    wire shadow_D = (sx > -110 && sx < -70 && abs_sy < 40) && !(sx > -100 && sx < -80 && abs_sy < 20);
-    wire shadow_L = (sx > -50  && sx < -10 && abs_sy < 40) && !(sx > -30  && sx < -10 && sy < 20);
-    wire shadow_S = (sx > 10   && sx < 50  && abs_sy < 40) && !(sx > 30   && sx < 50  && sy > -20 && sy < 0) && !(sx > 10 && sx < 30 && sy > 0 && sy < 20);
-    wire shadow_U = (sx > 70   && sx < 110 && abs_sy < 40) && !(sx > 80   && sx < 100 && sy < 20);
     wire art_draw_shadow = (shadow_D || shadow_L || shadow_S || shadow_U) && !art_draw_dlsu;
 
     // =========================================================
-    // 6. SHARED TEXT ENGINE
+    // 6. SHARED TEXT ENGINE (Dense 5-Bit Map Optimization)
     // =========================================================
-    wire [5:0] txt_row = v_cnt[9:4]; 
-    wire [5:0] txt_col = h_cnt[9:4]; 
-    wire [2:0] txt_px  = h_cnt[3:1]; 
-    wire [2:0] txt_py  = v_cnt[3:1];
+    wire [5:0] txt_row = v_cnt[9:4]; wire [5:0] txt_col = h_cnt[9:4]; 
+    wire [2:0] txt_px  = h_cnt[3:1]; wire [2:0] txt_py  = v_cnt[3:1];
 
-    reg [7:0] txt_char;
+    reg [4:0] txt_idx;
     always @(*) begin
-        txt_char = 8'h20;
+        txt_idx = 0;
         if (!app_maze && !app_hilb) begin
             case (txt_row)
-                6'd01: case(txt_col) 14:txt_char="G"; 15:txt_char="a"; 16:txt_char="l"; 17:txt_char="v"; 18:txt_char="a"; 19:txt_char="n"; 20:txt_char="t"; 21:txt_char="r"; 22:txt_char="o"; 23:txt_char="n"; 24:txt_char="i"; 25:txt_char="x"; default:; endcase
-                6'd03: case(txt_col) 11:txt_char="C"; 12:txt_char="r"; 13:txt_char="a"; 14:txt_char="n"; 15:txt_char="k"; 17:txt_char="u"; 18:txt_char="p"; 20:txt_char="t"; 21:txt_char="h"; 22:txt_char="e"; 24:txt_char="p"; 25:txt_char="o"; 26:txt_char="w"; 27:txt_char="e"; 28:txt_char="r"; default:; endcase
-                6'd26: case(txt_col) 5:txt_char="M"; 6:txt_char="a"; 7:txt_char="d"; 8:txt_char="e"; 10:txt_char="b"; 11:txt_char="y"; 13:txt_char="C"; 14:txt_char="h"; 15:txt_char="i"; 16:txt_char="c"; 17:txt_char="o"; 19:txt_char="A"; 20:txt_char="n"; 21:txt_char="d"; 22:txt_char="r"; 23:txt_char="e"; 25:txt_char="G"; 26:txt_char="."; 28:txt_char="O"; 29:txt_char="l"; 30:txt_char="a"; 31:txt_char="g"; 32:txt_char="u"; 33:txt_char="e"; 34:txt_char="r"; default:; endcase
-                6'd28: case(txt_col) 11:txt_char="B"; 12:txt_char="S"; 13:txt_char="M"; 14:txt_char="S"; 16:txt_char="E"; 17:txt_char="C"; 18:txt_char="E"; 20:txt_char="B"; 21:txt_char="a"; 22:txt_char="t"; 23:txt_char="c"; 24:txt_char="h"; 26:txt_char="1"; 27:txt_char="2"; 28:txt_char="2"; default:; endcase
+                6'd01: case(txt_col) 
+                    14:txt_idx=1; 15:txt_idx=2; 16:txt_idx=3; 17:txt_idx=4; 18:txt_idx=2; 19:txt_idx=5; 
+                    20:txt_idx=6; 21:txt_idx=7; 22:txt_idx=8; 23:txt_idx=5; 24:txt_idx=9; 25:txt_idx=10; default:; 
+                endcase
+                6'd03: case(txt_col) 
+                    11:txt_idx=11; 12:txt_idx=7; 13:txt_idx=2; 14:txt_idx=5; 15:txt_idx=12; 
+                    17:txt_idx=13; 18:txt_idx=14; 20:txt_idx=6; 21:txt_idx=15; 22:txt_idx=16; 
+                    24:txt_idx=14; 25:txt_idx=8; 26:txt_idx=17; 27:txt_idx=16; 28:txt_idx=7; default:; 
+                endcase
+                6'd26: case(txt_col) 
+                    5:txt_idx=18; 6:txt_idx=2; 7:txt_idx=19; 8:txt_idx=16; 10:txt_idx=20; 11:txt_idx=21; 
+                    13:txt_idx=11; 14:txt_idx=15; 15:txt_idx=9; 16:txt_idx=22; 17:txt_idx=8; 19:txt_idx=23; 
+                    20:txt_idx=5; 21:txt_idx=19; 22:txt_idx=7; 23:txt_idx=16; 25:txt_idx=1; 26:txt_idx=24; 
+                    28:txt_idx=25; 29:txt_idx=3; 30:txt_idx=2; 31:txt_idx=26; 32:txt_idx=13; 33:txt_idx=16; 34:txt_idx=7; default:; 
+                endcase
+                6'd28: case(txt_col) 
+                    11:txt_idx=27; 12:txt_idx=28; 13:txt_idx=18; 14:txt_idx=28; 16:txt_idx=29; 17:txt_idx=11; 
+                    18:txt_idx=29; 20:txt_idx=27; 21:txt_idx=2; 22:txt_idx=6; 23:txt_idx=22; 24:txt_idx=15; 
+                    26:txt_idx=30; 27:txt_idx=31; 28:txt_idx=31; default:; 
+                endcase
                 default: ; 
             endcase
         end
@@ -286,38 +290,38 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
 
     reg [7:0] txt_font;
     always @(*) begin
-        case(txt_char)
-            "A": case(txt_py) 0:txt_font=8'h18; 1:txt_font=8'h3C; 2:txt_font=8'h66; 3:txt_font=8'h66; 4:txt_font=8'h7E; 5:txt_font=8'h66; 6:txt_font=8'h66; default:txt_font=0; endcase
-            "B": case(txt_py) 0:txt_font=8'hFC; 1:txt_font=8'h66; 2:txt_font=8'h66; 3:txt_font=8'h7C; 4:txt_font=8'h66; 5:txt_font=8'h66; 6:txt_font=8'hFC; default:txt_font=0; endcase
-            "C": case(txt_py) 0:txt_font=8'h3C; 1:txt_font=8'h66; 2:txt_font=8'h60; 3:txt_font=8'h60; 4:txt_font=8'h60; 5:txt_font=8'h66; 6:txt_font=8'h3C; default:txt_font=0; endcase
-            "E": case(txt_py) 0:txt_font=8'hFE; 1:txt_font=8'h62; 2:txt_font=8'h68; 3:txt_font=8'h78; 4:txt_font=8'h68; 5:txt_font=8'h62; 6:txt_font=8'hFE; default:txt_font=0; endcase
-            "G": case(txt_py) 0:txt_font=8'h3C; 1:txt_font=8'h66; 2:txt_font=8'h60; 3:txt_font=8'h6E; 4:txt_font=8'h66; 5:txt_font=8'h66; 6:txt_font=8'h3E; default:txt_font=0; endcase
-            "M": case(txt_py) 0:txt_font=8'hC6; 1:txt_font=8'hEE; 2:txt_font=8'hFE; 3:txt_font=8'hF6; 4:txt_font=8'hC6; 5:txt_font=8'hC6; 6:txt_font=8'hC6; default:txt_font=0; endcase
-            "O": case(txt_py) 0:txt_font=8'h3C; 1:txt_font=8'h66; 2:txt_font=8'h66; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h66; 6:txt_font=8'h3C; default:txt_font=0; endcase
-            "S": case(txt_py) 0:txt_font=8'h3E; 1:txt_font=8'h60; 2:txt_font=8'h60; 3:txt_font=8'h3C; 4:txt_font=8'h06; 5:txt_font=8'h06; 6:txt_font=8'h7C; default:txt_font=0; endcase
-            "a": case(txt_py) 2:txt_font=8'h3C; 3:txt_font=8'h06; 4:txt_font=8'h3E; 5:txt_font=8'h66; 6:txt_font=8'h3E; default:txt_font=0; endcase
-            "b": case(txt_py) 0:txt_font=8'h60; 1:txt_font=8'h60; 2:txt_font=8'h7C; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h66; 6:txt_font=8'h7C; default:txt_font=0; endcase
-            "c": case(txt_py) 2:txt_font=8'h3C; 3:txt_font=8'h66; 4:txt_font=8'h60; 5:txt_font=8'h66; 6:txt_font=8'h3C; default:txt_font=0; endcase
-            "d": case(txt_py) 0:txt_font=8'h06; 1:txt_font=8'h06; 2:txt_font=8'h3E; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h66; 6:txt_font=8'h3E; default:txt_font=0; endcase
-            "e": case(txt_py) 2:txt_font=8'h3C; 3:txt_font=8'h66; 4:txt_font=8'h7E; 5:txt_font=8'h60; 6:txt_font=8'h3C; default:txt_font=0; endcase
-            "g": case(txt_py) 2:txt_font=8'h3E; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h3E; 6:txt_font=8'h06; 7:txt_font=8'h3C; default:txt_font=0; endcase
-            "h": case(txt_py) 0:txt_font=8'h60; 1:txt_font=8'h60; 2:txt_font=8'h7C; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h66; 6:txt_font=8'hE6; default:txt_font=0; endcase
-            "i": case(txt_py) 0:txt_font=8'h18; 2:txt_font=8'h38; 3:txt_font=8'h18; 4:txt_font=8'h18; 5:txt_font=8'h18; 6:txt_font=8'h3C; default:txt_font=0; endcase
-            "k": case(txt_py) 0:txt_font=8'h60; 1:txt_font=8'h60; 2:txt_font=8'h66; 3:txt_font=8'h6C; 4:txt_font=8'h78; 5:txt_font=8'h6C; 6:txt_font=8'h66; default:txt_font=0; endcase
-            "l": case(txt_py) 0:txt_font=8'h38; 1:txt_font=8'h18; 2:txt_font=8'h18; 3:txt_font=8'h18; 4:txt_font=8'h18; 5:txt_font=8'h18; 6:txt_font=8'h3C; default:txt_font=0; endcase
-            "n": case(txt_py) 2:txt_font=8'h7C; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h66; 6:txt_font=8'hE6; default:txt_font=0; endcase
-            "o": case(txt_py) 2:txt_font=8'h3C; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h66; 6:txt_font=8'h3C; default:txt_font=0; endcase
-            "p": case(txt_py) 2:txt_font=8'h7C; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h7C; 6:txt_font=8'h60; 7:txt_font=8'h60; default:txt_font=0; endcase
-            "r": case(txt_py) 2:txt_font=8'h5C; 3:txt_font=8'h66; 4:txt_font=8'h60; 5:txt_font=8'h60; 6:txt_font=8'hF0; default:txt_font=0; endcase
-            "t": case(txt_py) 0:txt_font=8'h30; 1:txt_font=8'h30; 2:txt_font=8'hFC; 3:txt_font=8'h30; 4:txt_font=8'h30; 5:txt_font=8'h34; 6:txt_font=8'h18; default:txt_font=0; endcase
-            "u": case(txt_py) 2:txt_font=8'h66; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h66; 6:txt_font=8'h3A; default:txt_font=0; endcase
-            "v": case(txt_py) 2:txt_font=8'h66; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h3C; 6:txt_font=8'h18; default:txt_font=0; endcase
-            "w": case(txt_py) 2:txt_font=8'hC6; 3:txt_font=8'hC6; 4:txt_font=8'hD6; 5:txt_font=8'hFE; 6:txt_font=8'h6C; default:txt_font=0; endcase
-            "x": case(txt_py) 2:txt_font=8'h66; 3:txt_font=8'h3C; 4:txt_font=8'h18; 5:txt_font=8'h3C; 6:txt_font=8'h66; default:txt_font=0; endcase
-            "y": case(txt_py) 2:txt_font=8'h66; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h3E; 6:txt_font=8'h06; 7:txt_font=8'h3C; default:txt_font=0; endcase
-            "1": case(txt_py) 0:txt_font=8'h18; 1:txt_font=8'h38; 2:txt_font=8'h78; 3:txt_font=8'h18; 4:txt_font=8'h18; 5:txt_font=8'h18; 6:txt_font=8'h7E; default:txt_font=0; endcase
-            "2": case(txt_py) 0:txt_font=8'h3C; 1:txt_font=8'h66; 2:txt_font=8'h06; 3:txt_font=8'h0C; 4:txt_font=8'h18; 5:txt_font=8'h30; 6:txt_font=8'h7E; default:txt_font=0; endcase
-            ".": case(txt_py) 5:txt_font=8'h18; 6:txt_font=8'h18; default:txt_font=0; endcase
+        case(txt_idx)
+            1: case(txt_py) 0:txt_font=8'h3C; 1:txt_font=8'h66; 2:txt_font=8'h60; 3:txt_font=8'h6E; 4:txt_font=8'h66; 5:txt_font=8'h66; 6:txt_font=8'h3E; default:txt_font=0; endcase
+            2: case(txt_py) 2:txt_font=8'h3C; 3:txt_font=8'h06; 4:txt_font=8'h3E; 5:txt_font=8'h66; 6:txt_font=8'h3E; default:txt_font=0; endcase
+            3: case(txt_py) 0:txt_font=8'h38; 1:txt_font=8'h18; 2:txt_font=8'h18; 3:txt_font=8'h18; 4:txt_font=8'h18; 5:txt_font=8'h18; 6:txt_font=8'h3C; default:txt_font=0; endcase
+            4: case(txt_py) 2:txt_font=8'h66; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h3C; 6:txt_font=8'h18; default:txt_font=0; endcase
+            5: case(txt_py) 2:txt_font=8'h7C; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h66; 6:txt_font=8'hE6; default:txt_font=0; endcase
+            6: case(txt_py) 0:txt_font=8'h30; 1:txt_font=8'h30; 2:txt_font=8'hFC; 3:txt_font=8'h30; 4:txt_font=8'h30; 5:txt_font=8'h34; 6:txt_font=8'h18; default:txt_font=0; endcase
+            7: case(txt_py) 2:txt_font=8'h5C; 3:txt_font=8'h66; 4:txt_font=8'h60; 5:txt_font=8'h60; 6:txt_font=8'hF0; default:txt_font=0; endcase
+            8: case(txt_py) 2:txt_font=8'h3C; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h66; 6:txt_font=8'h3C; default:txt_font=0; endcase
+            9: case(txt_py) 0:txt_font=8'h18; 2:txt_font=8'h38; 3:txt_font=8'h18; 4:txt_font=8'h18; 5:txt_font=8'h18; 6:txt_font=8'h3C; default:txt_font=0; endcase
+            10: case(txt_py) 2:txt_font=8'h66; 3:txt_font=8'h3C; 4:txt_font=8'h18; 5:txt_font=8'h3C; 6:txt_font=8'h66; default:txt_font=0; endcase
+            11: case(txt_py) 0:txt_font=8'h3C; 1:txt_font=8'h66; 2:txt_font=8'h60; 3:txt_font=8'h60; 4:txt_font=8'h60; 5:txt_font=8'h66; 6:txt_font=8'h3C; default:txt_font=0; endcase
+            12: case(txt_py) 0:txt_font=8'h60; 1:txt_font=8'h60; 2:txt_font=8'h66; 3:txt_font=8'h6C; 4:txt_font=8'h78; 5:txt_font=8'h6C; 6:txt_font=8'h66; default:txt_font=0; endcase
+            13: case(txt_py) 2:txt_font=8'h66; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h66; 6:txt_font=8'h3A; default:txt_font=0; endcase
+            14: case(txt_py) 2:txt_font=8'h7C; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h7C; 6:txt_font=8'h60; 7:txt_font=8'h60; default:txt_font=0; endcase
+            15: case(txt_py) 0:txt_font=8'h60; 1:txt_font=8'h60; 2:txt_font=8'h7C; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h66; 6:txt_font=8'hE6; default:txt_font=0; endcase
+            16: case(txt_py) 2:txt_font=8'h3C; 3:txt_font=8'h66; 4:txt_font=8'h7E; 5:txt_font=8'h60; 6:txt_font=8'h3C; default:txt_font=0; endcase
+            17: case(txt_py) 2:txt_font=8'hC6; 3:txt_font=8'hC6; 4:txt_font=8'hD6; 5:txt_font=8'hFE; 6:txt_font=8'h6C; default:txt_font=0; endcase
+            18: case(txt_py) 0:txt_font=8'hC6; 1:txt_font=8'hEE; 2:txt_font=8'hFE; 3:txt_font=8'hF6; 4:txt_font=8'hC6; 5:txt_font=8'hC6; 6:txt_font=8'hC6; default:txt_font=0; endcase
+            19: case(txt_py) 0:txt_font=8'h06; 1:txt_font=8'h06; 2:txt_font=8'h3E; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h66; 6:txt_font=8'h3E; default:txt_font=0; endcase
+            20: case(txt_py) 0:txt_font=8'h60; 1:txt_font=8'h60; 2:txt_font=8'h7C; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h66; 6:txt_font=8'h7C; default:txt_font=0; endcase
+            21: case(txt_py) 2:txt_font=8'h66; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h3E; 6:txt_font=8'h06; 7:txt_font=8'h3C; default:txt_font=0; endcase
+            22: case(txt_py) 2:txt_font=8'h3C; 3:txt_font=8'h66; 4:txt_font=8'h60; 5:txt_font=8'h66; 6:txt_font=8'h3C; default:txt_font=0; endcase
+            23: case(txt_py) 0:txt_font=8'h18; 1:txt_font=8'h3C; 2:txt_font=8'h66; 3:txt_font=8'h66; 4:txt_font=8'h7E; 5:txt_font=8'h66; 6:txt_font=8'h66; default:txt_font=0; endcase
+            24: case(txt_py) 5:txt_font=8'h18; 6:txt_font=8'h18; default:txt_font=0; endcase
+            25: case(txt_py) 0:txt_font=8'h3C; 1:txt_font=8'h66; 2:txt_font=8'h66; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h66; 6:txt_font=8'h3C; default:txt_font=0; endcase
+            26: case(txt_py) 2:txt_font=8'h3E; 3:txt_font=8'h66; 4:txt_font=8'h66; 5:txt_font=8'h3E; 6:txt_font=8'h06; 7:txt_font=8'h3C; default:txt_font=0; endcase
+            27: case(txt_py) 0:txt_font=8'hFC; 1:txt_font=8'h66; 2:txt_font=8'h66; 3:txt_font=8'h7C; 4:txt_font=8'h66; 5:txt_font=8'h66; 6:txt_font=8'hFC; default:txt_font=0; endcase
+            28: case(txt_py) 0:txt_font=8'h3E; 1:txt_font=8'h60; 2:txt_font=8'h60; 3:txt_font=8'h3C; 4:txt_font=8'h06; 5:txt_font=8'h06; 6:txt_font=8'h7C; default:txt_font=0; endcase
+            29: case(txt_py) 0:txt_font=8'hFE; 1:txt_font=8'h62; 2:txt_font=8'h68; 3:txt_font=8'h78; 4:txt_font=8'h68; 5:txt_font=8'h62; 6:txt_font=8'hFE; default:txt_font=0; endcase
+            30: case(txt_py) 0:txt_font=8'h18; 1:txt_font=8'h38; 2:txt_font=8'h78; 3:txt_font=8'h18; 4:txt_font=8'h18; 5:txt_font=8'h18; 6:txt_font=8'h7E; default:txt_font=0; endcase
+            31: case(txt_py) 0:txt_font=8'h3C; 1:txt_font=8'h66; 2:txt_font=8'h06; 3:txt_font=8'h0C; 4:txt_font=8'h18; 5:txt_font=8'h30; 6:txt_font=8'h7E; default:txt_font=0; endcase
             default: txt_font = 8'h00;
         endcase
     end
@@ -332,59 +336,31 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
         if (!display_on) begin
             r = 0; g = 0; b = 0;
         end else if (app_maze) begin
-            // -----------------------------------------------------
-            // RENDER: MAZE GAME
-            // -----------------------------------------------------
-            if (maze_draw_text) begin
-                r = maze_flash ? 3 : 0; g = 3; b = maze_flash ? 3 : 0; 
-            end else if (is_player) begin
-                r = maze_flash ? 3 : 0; g = 3; b = 3;
-            end else if (is_target) begin
-                r = 3; g = 3; b = 3; 
-            end else if (maze_wall) begin
-                if (maze_flash) begin r = 3; g = 3; b = 0; end
-                else if (brick_hi) begin r = 0; g = 3; b = 0; end
-                else if (brick_lo) begin r = 0; g = 1; b = 0; end
-                else begin r = 0; g = 2; b = 0; end
+            if (maze_draw_text) begin r = maze_flash ? 3 : 0; g = 3; b = maze_flash ? 3 : 0; end 
+            else if (is_player) begin r = maze_flash ? 3 : 0; g = 3; b = 3; end 
+            else if (is_target) begin r = 3; g = 3; b = 3; end 
+            else if (maze_wall) begin
+                if (maze_flash)      begin r = 3; g = 3; b = 0; end
+                else if (brick_hi)   begin r = 0; g = 3; b = 0; end
+                else if (brick_lo)   begin r = 0; g = 1; b = 0; end
+                else                 begin r = 0; g = 2; b = 0; end
             end else begin
                 r = 0; g = 0; b = 0; 
             end
         end else if (app_hilb) begin
-            // -----------------------------------------------------
-            // RENDER: HILBERT CURVE
-            // -----------------------------------------------------
-            if (draw_hilbert) begin
-                r = hilbert_r; g = hilbert_g; b = hilbert_b;
-            end else begin
-                r = 0; g = 0; b = 0;
-            end
+            if (draw_hilbert) begin r = hilbert_r; g = hilbert_g; b = hilbert_b; end 
+            else begin r = 0; g = 0; b = 0; end
         end else begin
-            // -----------------------------------------------------
-            // RENDER: GALVANTRONIX SHIELD / CIRCUIT MOTIF (Default)
-            // -----------------------------------------------------
             if (draw_text) begin
-                if (txt_row == 1) begin 
-                    r = 0; g = 1; b = 3; 
-                end else if (txt_row == 3) begin 
-                    r = 0; g = 3; b = 3; 
-                end else if (txt_row > 20) begin 
-                    r = 3; g = 3; b = 3; 
-                end else begin
-                    r = 3; g = 3; b = 3; 
-                end
-            end else if (art_draw_dlsu) begin 
-                r = 0; g = 3; b = 0; 
-            end else if (art_draw_shadow) begin 
-                r = 0; g = 1; b = 0; 
-            end else if (outer_shield) begin 
-                r = 3; g = 3; b = 3; 
-            end else if (inner_pulse) begin 
-                r = 1; g = 3; b = 1; 
-            end else if (art_circuit) begin 
-                r = 0; g = 1; b = 0; 
-            end else begin 
-                r = 0; g = 0; b = 0; 
-            end
+                if (txt_row == 1)      begin r = 0; g = 1; b = 3; end 
+                else if (txt_row == 3) begin r = 0; g = 3; b = 3; end 
+                else                   begin r = 3; g = 3; b = 3; end
+            end else if (art_draw_dlsu)   begin r = 0; g = 3; b = 0; end 
+            else if (art_draw_shadow) begin r = 0; g = 1; b = 0; end 
+            else if (outer_shield)    begin r = 3; g = 3; b = 3; end 
+            else if (inner_pulse)     begin r = 1; g = 3; b = 1; end 
+            else if (art_circuit)     begin r = 0; g = 1; b = 0; end 
+            else                      begin r = 0; g = 0; b = 0; end 
         end
     end
 
