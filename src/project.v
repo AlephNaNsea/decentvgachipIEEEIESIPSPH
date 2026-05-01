@@ -42,7 +42,9 @@ module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
         if (reset) frame_counter <= 0;
         else if (frame_tick) frame_counter <= frame_counter + 1;
     end
-    wire [8:0] frame_cnt = frame_counter[8:0]; 
+    
+    // FIX: Truncated to 8 bits to resolve the UNUSEDSIGNAL warning!
+    wire [7:0] frame_cnt = frame_counter[7:0]; 
 
     // Unified Mode Mux
     wire app_galv   = ui_in[6];
