@@ -1,6 +1,6 @@
 `default_nettype none
 
-module tt_um_dlsu_multimode (
+module tt_um_AlephNaNsea_decentvgachipIEEEIESIPSPH (
     input  wire [7:0] ui_in,    // [7]:Unused, [6]:Galv, [5]:Maze, [4:1]:D-Pad, [0]:Hilbert
     output wire [7:0] uo_out,   // VGA out: {hsync, B0, G0, R0, vsync, B1, G1, R1}
     input  wire [7:0] uio_in,   
